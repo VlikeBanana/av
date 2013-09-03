@@ -257,7 +257,9 @@ void CameraClient::disconnect() {
     // Release the held ANativeWindow resources.
     if (mPreviewWindow != 0) {
 #ifdef QCOM_HARDWARE
+#ifndef NO_UPDATE_PREVIEW
         mHardware->setPreviewWindow(0);
+#endif
 #endif
         disconnectWindow(mPreviewWindow);
         mPreviewWindow = 0;
@@ -303,8 +305,13 @@ status_t CameraClient::setPreviewWindow(const sp<IBinder>& binder,
             result = mHardware->setPreviewWindow(window);
         }
 #ifdef QCOM_HARDWARE
+#ifndef NO_UPDATE_PREVIEW
     } else {
+        if (window != 0) {
+            native_window_set_buffers_transform(window.get(), mOrientation);
+        }
         result = mHardware->setPreviewWindow(window);
+#endif
 #endif
     }
 
@@ -604,6 +611,12 @@ status_t CameraClient::takePicture(int msgType) {
     disableMsgType(CAMERA_MSG_PREVIEW_METADATA);
 #endif
     enableMsgType(picMsgType);
+#ifdef QCOM_HARDWARE
+    mBurstCnt = mHardware->getParameters().getInt("num-snaps-per-shutter");
+    if(mBurstCnt <= 0)
+        mBurstCnt = 1;
+    LOG1("mBurstCnt = %d", mBurstCnt);
+#endif
 
     return mHardware->takePicture();
 }
@@ -697,6 +710,12 @@ status_t CameraClient::sendCommand(int32_t cmd, int32_t arg1, int32_t arg2) {
     } else if (cmd == CAMERA_CMD_PING) {
         // If mHardware is 0, checkPidAndHardware will return error.
         return OK;
+#ifdef QCOM_HARDWARE
+    } else if (cmd == CAMERA_CMD_HISTOGRAM_ON) {
+        enableMsgType(CAMERA_MSG_STATS_DATA);
+    } else if (cmd == CAMERA_CMD_HISTOGRAM_OFF) {
+        disableMsgType(CAMERA_MSG_STATS_DATA);
+#endif
     }
 
     return mHardware->sendCommand(cmd, arg1, arg2);
@@ -953,7 +972,17 @@ void CameraClient::handleRawPicture(const sp<IMemory>& mem) {
 
 // picture callback - compressed picture ready
 void CameraClient::handleCompressedPicture(const sp<IMemory>& mem) {
-    disableMsgType(CAMERA_MSG_COMPRESSED_IMAGE);
+#ifdef QCOM_HARDWARE
+    if (mBurstCnt)
+        mBurstCnt--;
+
+    if (!mBurstCnt) {
+        LOG1("handleCompressedPicture mBurstCnt = %d", mBurstCnt);
+#endif
+        disableMsgType(CAMERA_MSG_COMPRESSED_IMAGE);
+#ifdef QCOM_HARDWARE
+    }
+#endif
 
     sp<ICameraClient> c = mRemoteCallback;
     mLock.unlock();
