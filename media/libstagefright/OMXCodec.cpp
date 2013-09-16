@@ -253,6 +253,20 @@ void OMXCodec::findMatchingCodecs(
     }
 
     size_t index = 0;
+
+#ifdef ENABLE_QC_AV_ENHANCEMENTS
+    //Check if application specially reuqested for  aac hardware encoder
+    //This is not a part of  mediacodec list
+    if (matchComponentName && !strcmp("OMX.qcom.audio.encoder.aac", matchComponentName)) {
+        matchingCodecs->add();
+
+        CodecNameAndQuirks *entry = &matchingCodecs->editItemAt(index);
+        entry->mName = String8("OMX.qcom.audio.encoder.aac");
+        entry->mQuirks = 0;
+        return;
+    }
+#endif
+
     for (;;) {
         ssize_t matchIndex =
             list->findCodecByType(mime, createEncoder, index);
@@ -351,6 +365,14 @@ bool OMXCodec::findCodecQuirks(const char *componentName, uint32_t *quirks) {
     if (list == NULL) {
         return false;
     }
+#ifdef ENABLE_QC_AV_ENHANCEMENTS
+    //Check for aac hardware encoder
+    //This is not a part of  mediacodec list
+    if (componentName && !strcmp("OMX.qcom.audio.encoder.aac", componentName)) {
+        *quirks = 0;
+        return true;
+    }
+#endif
 
     ssize_t index = list->findCodecByName(componentName);
 
@@ -3782,12 +3804,14 @@ status_t OMXCodec::waitForBufferFilled_l() {
         return mBufferFilled.wait(mLock);
     }
     status_t err = mBufferFilled.waitRelative(mLock, kBufferFilledEventTimeOutNs);
+#ifdef QCOM_HARDWARE
     if ((err == -ETIMEDOUT) && (mPaused == true)){
         // When the audio playback is paused, the fill buffer maybe timed out
         // if input data is not available to decode. Hence, considering the
         // timed out as a valid case.
         err = OK;
     }
+#endif
     if (err != OK) {
         CODEC_LOGE("Timed out waiting for output buffers: %d/%d",
             countBuffersWeOwn(mPortBuffers[kPortIndexInput]),
@@ -4446,6 +4470,13 @@ status_t OMXCodec::read(
 #endif
            mFilledBuffers.empty()) {
         if ((err = waitForBufferFilled_l()) != OK) {
+            if ((err == -ETIMEDOUT) && (mPaused == true) && !mIsVideo) {
+                // When the audio playback is paused, the fill buffer maybe timed out
+                // if input data is not available to decode. Hence, considering the
+                // timed out as a valid case.
+                ALOGV("returned OK instead of timedout from read() as mPaused is true");
+                err = OK;
+            }
             return err;
         }
     }
